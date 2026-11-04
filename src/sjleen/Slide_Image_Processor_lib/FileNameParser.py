@@ -13,7 +13,9 @@ import re
 from collections import defaultdict
 
 SUPPORTED_EXTENSIONS = ['.tif', '.tiff', '.jpg', '.jpeg', '.png']
-DELIMITER_PATTERN    = r'([_\-\s]+)'
+# '_' (each one: '__' holds an empty token) and spaces split names; '-' never
+# does (it is the only safe joiner inside a token, e.g. 's1-2', 'slice-vmhvl')
+DELIMITER_PATTERN    = r'(_|[ \t]+)'
 
 # One channel of a multi-channel / RGB-merge file is addressed as
 # "<file path>|C2" or "<file path>|G". '|' cannot occur in Windows file
@@ -105,7 +107,8 @@ def tokenize_with_delimiters(filename):
     Split filename stem into tokens and delimiters.
 
     'Sample01_DAPI'  -> (['Sample01','DAPI'], ['_'])
-    'Sample-01_GFP'  -> (['Sample','01','GFP'], ['-','_'])
+    'Sample-01_GFP'  -> (['Sample-01','GFP'], ['_'])      ('-' does not split)
+    's1_data__488'   -> (['s1','data','','488'], ['_','_','_'])  ('__': empty token)
     """
     stem  = os.path.splitext(filename)[0]
     parts = re.split(DELIMITER_PATTERN, stem)
@@ -374,7 +377,10 @@ def parse_files(files, forced_channel_pos=None, allow_no_channel=False):
     # 4. Group into sets
     sets     = defaultdict(dict)
     tok_info = {}
-    raw = [("_".join(t for i, t in enumerate(tokens) if i != ch_pos), full_path)
+    # set ids join the pieces with '_' and turn '-' into '_' as well, so they
+    # stay the same as when '-' still split names (saved projects keep their slides)
+    sid_of = lambda toks: "_".join(toks).replace("-", "_")
+    raw = [(sid_of([t for i, t in enumerate(tokens) if i != ch_pos]), full_path)
            for _f, tokens, _d, _e, full_path in parsed]
     ids = _unique_ids(raw, [tokens[ch_pos] for _f, tokens, _d, _e, _p in parsed])
 
@@ -389,7 +395,7 @@ def parse_files(files, forced_channel_pos=None, allow_no_channel=False):
                 if i < ch_pos - 1 or i > ch_pos:
                     set_delims.append(d)
 
-        set_id = ids[("_".join(set_tokens), full_path)]
+        set_id = ids[(sid_of(set_tokens), full_path)]
         # full_path already holds the full path returned by os.walk
         sets[set_id][channel_name] = full_path
 

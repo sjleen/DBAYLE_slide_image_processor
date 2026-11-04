@@ -41,7 +41,7 @@ from loci.formats   import FormatTools
 
 
 SCHEMA          = "section_pipeline/1"
-VERSION         = "1.0.1"                  # Slide Image Processor release
+VERSION         = "1.0.2"                  # Slide Image Processor release
 PROJECT_DIR     = ".section_pipeline"
 PROJECT_FILE    = "project.json"
 HISTORY_DIR     = "history"
@@ -49,7 +49,7 @@ HISTORY_KEEP    = 20
 LOCK_FILE       = "project.lock"   # held while project.json is written
 
 ROTATIONS       = (0, 90, 180, 270)          # stage-1 slide rotation (CW)
-NAME_DELIMS     = re.compile(r'[_\-\s]')     # FileNameParser delimiters
+NAME_DELIMS     = re.compile(r'[_ \t]')     # FileNameParser delimiters ('-' does not split)
 BAD_FILE_CHARS  = re.compile(r'[\\/:*?"<>|]')
 
 DEFAULT_SETTINGS = {
@@ -636,10 +636,10 @@ def check_template(template):
 
 
 def label_warnings(label):
-    """FileNameParser splits on _ - and spaces; a label containing them
+    """FileNameParser splits on _ and spaces; a label containing them
     changes the token count and can break channel auto-detection."""
     if label and NAME_DELIMS.search(label):
-        return "'%s' contains _ - or space (splits filename tokens)" % label
+        return "'%s' contains _ or space (splits filename tokens)" % label
     return None
 
 

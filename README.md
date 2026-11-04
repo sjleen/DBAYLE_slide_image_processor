@@ -1,4 +1,4 @@
-# Slide Image Processor 1.0.1
+# Slide Image Processor 1.0.2
 
 A Fiji plugin that turns whole-slide scans of tissue sections into one
 cropped, numbered, correctly oriented image per section.
@@ -26,9 +26,9 @@ It runs in three steps, all started from one launcher:
    - macOS: right-click `Fiji.app` > **Show Package Contents**, then `plugins/`
 
    Writing there needs permission to change the Fiji folder (for example, Fiji under `C:\Program Files` needs an administrator).
-4. Start Fiji and run **Plugins > sjleen > Slide Image Processor v1.0.1**.
+4. Start Fiji and run **Plugins > sjleen > Slide Image Processor v1.0.2**.
 
-Only the launcher (`Slide_Image_Processor_v1.0.1.py`) appears in the menu; the three tools open from it.
+Only the launcher (`Slide_Image_Processor_v1.0.2.py`) appears in the menu; the three tools open from it.
 
 ## Updating
 
@@ -51,7 +51,7 @@ Under each launcher button, a status list shows what that step has produced: gre
 
 ## File names
 
-The channel is read from the file names, for example `01_DAPI_1-6x16.tif` and `01_647_1-6x16.tif` form one slide with two channels. Files that hold several channels (multi-channel TIFF, RGB) are split into their channels automatically. The same file name may appear in different sub-folders.
+The channel is read from the file names, for example `01_DAPI_1-6x16.tif` and `01_647_1-6x16.tif` form one slide with two channels. Name pieces are separated by `_` (each one, so `__` holds an empty piece) or spaces; `-` stays inside a piece. Files that hold several channels (multi-channel TIFF, RGB) are split into their channels automatically. The same file name may appear in different sub-folders.
 
 ## Outputs
 
@@ -86,6 +86,8 @@ All results stay inside the project folder.
 
 ## Version
 
+- **1.0.2** (2026-11-04)
+  - File names: every `_` separates pieces, so `__` counts as an empty piece, and `-` no longer splits (`s1-2`, `1-4x4` stay one piece). Folders that mix such names now load. Slide IDs of existing projects are unchanged.
 - **1.0.1** (2026-10-20)
   - Step 1: the level (min / max) setting now applies to 8-bit images, in the viewer and in 8-bit / merged exports.
   - Step 1: channel detection from the file names no longer guesses when the name pattern allows several readings (for example 3 slides x 4 channels): channel-like names (DAPI, GFP, Cy5, 488, C1 ...) decide, otherwise you are asked.
