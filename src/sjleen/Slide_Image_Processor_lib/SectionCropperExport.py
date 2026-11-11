@@ -399,22 +399,28 @@ def render_output(kind, ch, ips, proj, chans, name, cache):
 PLANE_STRIP = 256 * 1024 * 1024     # one Java byte array holds < 2 GiB
 
 
-def _slide_planes(src, pool, secs):
-    """{channel: whole L0 plane in view orientation} when the slide fits in
-    half the free heap and its exported sections cover >= 1/4 of it; else
-    None (read each section's region from the file). One full read beats
-    re-decoding the same compressed strips once per section and channel."""
+def _whole_read_ok(src, pool, secs):
+    """Read the slide's whole planes once when they fit in half the free heap
+    and its exported sections cover >= 1/4 of it; else read each section's
+    region. One full read beats re-decoding the same compressed strips once
+    per section and channel."""
     from loci.formats import FormatTools
     from java.lang import Runtime
-    readers = dict((ch, pool.get(src.chans[ch]['paths'][0])) for ch in src.channels())
+    readers = [pool.get(src.chans[ch]['paths'][0]) for ch in src.channels()]
     need = sum(r.getSizeX() * r.getSizeY() * FormatTools.getBytesPerPixel(r.getPixelType())
-               for r in readers.values())
+               for r in readers)
     rt = Runtime.getRuntime()
     free = rt.maxMemory() - (rt.totalMemory() - rt.freeMemory())
-    r0 = readers.values()[0]
+    r0 = readers[0]
     cover = sum(s['rect'][2] * s['rect'][3] for s in secs if s.get('rect')) / float(r0.getSizeX() * r0.getSizeY())
-    if need > free * 0.5 or cover < 0.25:
-        return None
+    return need <= free * 0.5 and cover >= 0.25
+
+
+def _slide_planes(src, pool, on_strip=None):
+    """{channel: whole L0 plane in view orientation}; on_strip(pixels) after
+    each strip read (progress)."""
+    from loci.formats import FormatTools
+    readers = dict((ch, pool.get(src.chans[ch]['paths'][0])) for ch in src.channels())
     out = {}
     for ch, r in readers.items():
         w, h = r.getSizeX(), r.getSizeY()
@@ -427,6 +433,8 @@ def _slide_planes(src, pool, secs):
             if ip is None:
                 ip = part.createProcessor(w, h)
             ip.insert(part, 0, y)
+            if on_strip:
+                on_strip(w * n)
         out[ch] = spp.orient_processor(ip, src.rot, src.flip)
     return out
 
@@ -442,20 +450,32 @@ def run_export(win, opts, jobs, secs, prog):
             by_sec.setdefault(j['sec_id'], []).append(j)
     pool = core.ReaderPool()
     done, errors, n = 0, [], len(secs)
-    # work of a section: its crop area x (channels read + files written)
-    def work(sec):
-        r = sec.get('rect')
-        return (r[2] * r[3] if r else 0) * (len(sec.get('channels') or ()) +
-                                            len(by_sec.get(sec['sec_id']) or ()))
-    eta = getattr(prog, 'eta', None)
-    if eta:
-        eta.set_total(sum(work(s) for s in secs if by_sec.get(s['sec_id'])))
     # one slide at a time, so its whole planes are read once and then dropped
     order = []
     for s in secs:
         if s['slide'] not in order:
             order.append(s['slide'])
     secs = sorted(secs, key=lambda s: order.index(s['slide']))
+    whole, whole_px = {}, 0
+    for sl in order:
+        try:
+            src = win.source(sl)
+            whole[sl] = _whole_read_ok(src, pool, [s for s in secs
+                if s['slide'] == sl and by_sec.get(s['sec_id'])])
+            if whole[sl]:
+                whole_px += sum(src.chans[ch]['dims'][0][0] * src.chans[ch]['dims'][0][1]
+                                for ch in src.channels())
+        except Exception:
+            whole[sl] = False            # the export loop reports the error
+    # work (pixels): whole-slide reads + per section crop area x (channels
+    # read from the file, unless the slide is read whole + files written)
+    def work(sec):
+        r = sec.get('rect')
+        reads = 0 if whole.get(sec['slide']) else len(sec.get('channels') or ())
+        return (r[2] * r[3] if r else 0) * (reads + len(by_sec.get(sec['sec_id']) or ()))
+    eta = getattr(prog, 'eta', None)
+    if eta:
+        eta.set_total(whole_px + sum(work(s) for s in secs if by_sec.get(s['sec_id'])))
     planes, planes_slide = None, object()
     try:
         for k, sec in enumerate(secs):
@@ -471,18 +491,17 @@ def run_export(win, opts, jobs, secs, prog):
                 src = win.source(sec['slide'])
                 if planes_slide != sec['slide']:
                     planes, planes_slide = None, sec['slide']     # free the last slide first
-                    try:
-                        planes = _slide_planes(src, pool, [s for s in secs
-                            if s['slide'] == sec['slide'] and by_sec.get(s['sec_id'])])
-                    except (Exception, Throwable) as e:   # e.g. out of memory: region reads still work
-                        IJ.log("[Cropper] whole-slide read of %s skipped: %s" % (sec['slide'], e))
+                    if whole.get(sec['slide']):
+                        try:
+                            planes = _slide_planes(src, pool, eta.add if eta else None)
+                        except (Exception, Throwable) as e:   # e.g. out of memory: region reads still work
+                            IJ.log("[Cropper] whole-slide read of %s skipped: %s" % (sec['slide'], e))
                 ips = {}
                 for ch in src.channels():
                     c = src.chans[ch]
                     lw, lh = c['dims'][0]
                     if planes is not None:
-                        x, y, w, h = sec['rect']
-                        planes[ch].setRoi(x, y, w, h)
+                        planes[ch].setRoi(*sec['rect'])
                         ip = planes[ch].crop()
                     else:
                         ip = spp.read_view_region(pool.get(c['paths'][0]), lw, lh,
