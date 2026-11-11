@@ -1,4 +1,4 @@
-# Slide Image Processor 1.0.2
+# Slide Image Processor 1.0.3
 
 A Fiji plugin that turns whole-slide scans of tissue sections into one
 cropped, numbered, correctly oriented image per section.
@@ -26,9 +26,9 @@ It runs in three steps, all started from one launcher:
    - macOS: right-click `Fiji.app` > **Show Package Contents**, then `plugins/`
 
    Writing there needs permission to change the Fiji folder (for example, Fiji under `C:\Program Files` needs an administrator).
-4. Start Fiji and run **Plugins > sjleen > Slide Image Processor v1.0.2**.
+4. Start Fiji and run **Plugins > sjleen > Slide Image Processor v1.0.3**.
 
-Only the launcher (`Slide_Image_Processor_v1.0.2.py`) appears in the menu; the three tools open from it.
+Only the launcher (`Slide_Image_Processor_v1.0.3.py`) appears in the menu; the three tools open from it.
 
 ## Updating
 
@@ -86,6 +86,8 @@ All results stay inside the project folder.
 
 ## Version
 
+- **1.0.3** (2026-11-10)
+  - Step 2 export: each slide is read once and its sections are cut in memory (when the slide fits in half the free memory and the exported sections cover at least a quarter of it), instead of reading every section and channel from the file. Output is pixel-identical; exports are faster, most of all for compressed TIFFs.
 - **1.0.2** (2026-11-04)
   - File names: every `_` separates pieces, so `__` counts as an empty piece, and `-` no longer splits (`s1-2`, `1-4x4` stay one piece). Folders that mix such names now load. Slide IDs of existing projects are unchanged.
 - **1.0.1** (2026-10-20)

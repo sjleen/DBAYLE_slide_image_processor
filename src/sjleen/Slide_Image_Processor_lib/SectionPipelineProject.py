@@ -41,7 +41,7 @@ from loci.formats   import FormatTools
 
 
 SCHEMA          = "section_pipeline/1"
-VERSION         = "1.0.2"                  # Slide Image Processor release
+VERSION         = "1.0.3"                  # Slide Image Processor release
 PROJECT_DIR     = ".section_pipeline"
 PROJECT_FILE    = "project.json"
 HISTORY_DIR     = "history"

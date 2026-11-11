@@ -1,5 +1,5 @@
 # ============================================================
-# Slide_Image_Processor_v1.0.2.py  -  launcher for the section pipeline (file name carries the version)
+# Slide_Image_Processor_v1.0.3.py  -  launcher for the section pipeline (file name carries the version)
 #
 # Pick one folder, then open any stage with it:
 #   1. Multichannel Image Set Previewer (exposure, slide rotation)

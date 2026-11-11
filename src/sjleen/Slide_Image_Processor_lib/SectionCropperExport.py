@@ -19,7 +19,7 @@ from java.awt       import (BorderLayout, FlowLayout, GridLayout, Dimension,
                             Color, Cursor, GridBagLayout, GridBagConstraints,
                             Insets, Font)
 from java.awt.event import ActionListener
-from java.lang      import Runnable
+from java.lang      import Runnable, Throwable
 from javax.swing    import (JDialog, JPanel, JLabel, JButton, JCheckBox,
                             JRadioButton, ButtonGroup, JTextField, JTable,
                             JScrollPane, JProgressBar, JOptionPane,
@@ -396,6 +396,41 @@ def render_output(kind, ch, ips, proj, chans, name, cache):
     return imp
 
 
+PLANE_STRIP = 256 * 1024 * 1024     # one Java byte array holds < 2 GiB
+
+
+def _slide_planes(src, pool, secs):
+    """{channel: whole L0 plane in view orientation} when the slide fits in
+    half the free heap and its exported sections cover >= 1/4 of it; else
+    None (read each section's region from the file). One full read beats
+    re-decoding the same compressed strips once per section and channel."""
+    from loci.formats import FormatTools
+    from java.lang import Runtime
+    readers = dict((ch, pool.get(src.chans[ch]['paths'][0])) for ch in src.channels())
+    need = sum(r.getSizeX() * r.getSizeY() * FormatTools.getBytesPerPixel(r.getPixelType())
+               for r in readers.values())
+    rt = Runtime.getRuntime()
+    free = rt.maxMemory() - (rt.totalMemory() - rt.freeMemory())
+    r0 = readers.values()[0]
+    cover = sum(s['rect'][2] * s['rect'][3] for s in secs if s.get('rect')) / float(r0.getSizeX() * r0.getSizeY())
+    if need > free * 0.5 or cover < 0.25:
+        return None
+    out = {}
+    for ch, r in readers.items():
+        w, h = r.getSizeX(), r.getSizeY()
+        pt, le = r.getPixelType(), r.isLittleEndian()
+        rows = max(1, min(h, PLANE_STRIP // max(1, w * FormatTools.getBytesPerPixel(pt))))
+        ip = None
+        for y in range(0, h, rows):
+            n = min(rows, h - y)
+            part = spp._bytes_to_processor(r.openBytes(0, 0, y, w, n), pt, w, n, le)
+            if ip is None:
+                ip = part.createProcessor(w, h)
+            ip.insert(part, 0, y)
+        out[ch] = spp.orient_processor(ip, src.rot, src.flip)
+    return out
+
+
 def run_export(win, opts, jobs, secs, prog):
     proj = win.proj
     out = opts['out']
@@ -415,6 +450,13 @@ def run_export(win, opts, jobs, secs, prog):
     eta = getattr(prog, 'eta', None)
     if eta:
         eta.set_total(sum(work(s) for s in secs if by_sec.get(s['sec_id'])))
+    # one slide at a time, so its whole planes are read once and then dropped
+    order = []
+    for s in secs:
+        if s['slide'] not in order:
+            order.append(s['slide'])
+    secs = sorted(secs, key=lambda s: order.index(s['slide']))
+    planes, planes_slide = None, object()
     try:
         for k, sec in enumerate(secs):
             if prog.cancelled:
@@ -427,12 +469,24 @@ def run_export(win, opts, jobs, secs, prog):
                                                     sec['slide'], k + 1, n))
             try:
                 src = win.source(sec['slide'])
+                if planes_slide != sec['slide']:
+                    planes, planes_slide = None, sec['slide']     # free the last slide first
+                    try:
+                        planes = _slide_planes(src, pool, [s for s in secs
+                            if s['slide'] == sec['slide'] and by_sec.get(s['sec_id'])])
+                    except (Exception, Throwable) as e:   # e.g. out of memory: region reads still work
+                        IJ.log("[Cropper] whole-slide read of %s skipped: %s" % (sec['slide'], e))
                 ips = {}
                 for ch in src.channels():
                     c = src.chans[ch]
                     lw, lh = c['dims'][0]
-                    ip = spp.read_view_region(pool.get(c['paths'][0]), lw, lh,
-                                              src.rot, src.flip, sec['rect'])
+                    if planes is not None:
+                        x, y, w, h = sec['rect']
+                        planes[ch].setRoi(x, y, w, h)
+                        ip = planes[ch].crop()
+                    else:
+                        ip = spp.read_view_region(pool.get(c['paths'][0]), lw, lh,
+                                                  src.rot, src.flip, sec['rect'])
                     if opts['mask']:
                         roi = sec['roi'].clone()
                         b = roi.getBounds()
