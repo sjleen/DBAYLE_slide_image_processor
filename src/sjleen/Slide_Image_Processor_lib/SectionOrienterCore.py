@@ -28,7 +28,7 @@ import FileNameParser as fnp
 
 IMG_EXT = ('.tif', '.tiff', '.jpg', '.jpeg', '.png')
 TAGS_FILE = "orientation.json"
-IDENTITY = {'rot': 0.0, 'flip_h': False}
+IDENTITY = {'rot': 0.0, 'flip_h': False, 'dx': 0, 'dy': 0}  # dx/dy: shift in output px, after rotation
 
 
 def norm_rot(r):
@@ -41,7 +41,47 @@ def norm_rot(r):
 
 
 def is_identity(t):
-    return not t.get('flip_h') and norm_rot(t.get('rot', 0)) == 0.0
+    return (not t.get('flip_h') and norm_rot(t.get('rot', 0)) == 0.0
+            and not t.get('dx') and not t.get('dy'))
+
+
+def turns(t):
+    """Flip or rotation set (what a per-image export applies)."""
+    return bool(t.get('flip_h')) or norm_rot(t.get('rot', 0)) != 0.0
+
+
+def oriented_px(w, h, rot):
+    """Pixel size after rotate_enlarge."""
+    a = norm_rot(rot)
+    if a in (0.0, 180.0, -180.0):
+        return w, h
+    if a in (90.0, -90.0):
+        return h, w
+    r = math.radians(a)
+    return (int(math.ceil(abs(w * math.cos(r)) + abs(h * math.sin(r)))),
+            int(math.ceil(abs(w * math.sin(r)) + abs(h * math.cos(r)))))
+
+
+def common_canvas(items, log=None):
+    """One box enclosing every (flipped / rotated, moved) image around the
+    shared point (top center of each frame, as on screen): (W, H, left, top)."""
+    l = t = rr = b = None
+    for it in items:
+        try:
+            w, h = image_dims(it.files[0])
+        except Exception as e:
+            if log: log("[Orienter] size of %s: %s" % (it.label, e))
+            continue
+        fw, fh = oriented_px(w, h, it.tags.get('rot', 0))
+        x0 = int(round(it.tags.get('dx', 0))) - fw // 2
+        y0 = int(round(it.tags.get('dy', 0)))
+        l = x0 if l is None else min(l, x0)
+        t = y0 if t is None else min(t, y0)
+        rr = x0 + fw if rr is None else max(rr, x0 + fw)
+        b = y0 + fh if b is None else max(b, y0 + fh)
+    if l is None:
+        return None
+    return (rr - l, b - t, l, t)
 
 
 def tag_text(t):
@@ -51,6 +91,8 @@ def tag_text(t):
     r = norm_rot(t.get('rot', 0))
     if r:
         parts.append(("R%g" % r))
+    if t.get('dx') or t.get('dy'):
+        parts.append("X%+d Y%+d" % (t.get('dx', 0), t.get('dy', 0)))
     return " ".join(parts)
 
 
@@ -73,7 +115,8 @@ class Item(object):
         return not is_identity(self.tags)
 
     def set_saved(self, t):
-        self.tags = {'rot': norm_rot(t.get('rot', 0)), 'flip_h': bool(t.get('flip_h'))}
+        self.tags = {'rot': norm_rot(t.get('rot', 0)), 'flip_h': bool(t.get('flip_h')),
+                     'dx': float(t.get('dx', 0)), 'dy': float(t.get('dy', 0))}
         self.validated = bool(t.get('validated'))
 
     def record(self):
@@ -387,14 +430,27 @@ def rotate_enlarge(ip, angle, fill):
     return big
 
 
-def orient_ip(ip, tags, fill):
+def orient_ip(ip, tags, fill, canvas=None):
+    """Flip, then rotate (own bounding box). canvas = (W, H, left, top)
+    from common_canvas: placed by its move on that shared box instead."""
     if tags.get('flip_h'):
         ip = ip.duplicate()
         ip.flipHorizontal()
-    return rotate_enlarge(ip, tags.get('rot', 0), fill)
+    ip = rotate_enlarge(ip, tags.get('rot', 0), fill)
+    if canvas is None:
+        return ip
+    W, H, l, t = canvas
+    out = ip.createProcessor(W, H)
+    if isinstance(out, ColorProcessor):
+        out.setColor(int(fill)); out.fill()
+    else:
+        out.setValue(fill); out.fill()
+    out.insert(ip, int(round(tags.get('dx', 0))) - ip.getWidth() // 2 - l,
+               int(round(tags.get('dy', 0))) - t)
+    return out
 
 
-def apply_file(src, dst, tags, fill_raw):
+def apply_file(src, dst, tags, fill_raw, canvas=None):
     imp = IJ.openImage(src)
     if imp is None:
         raise IOError("cannot open " + src)
@@ -402,7 +458,7 @@ def apply_file(src, dst, tags, fill_raw):
     stack = imp.getStack()
     out = None
     for i in range(1, stack.getSize() + 1):
-        ip = orient_ip(stack.getProcessor(i), tags, fill)
+        ip = orient_ip(stack.getProcessor(i), tags, fill, canvas)
         if out is None:
             out = ImageStack(ip.getWidth(), ip.getHeight(), stack.getColorModel())
         out.addSlice(stack.getSliceLabel(i), ip)
@@ -497,16 +553,19 @@ def _tif_twin(f, b):
     return None
 
 
-def plan_apply(items, base, new_folder):
+def plan_apply(items, base, new_folder, common=False):
     """new_folder True: every file into 'oriented_<section folder>' beside
     it (re-oriented or copied; the section files stay). False: the section
     folder itself is renamed to 'oriented_<name>' (see rename_for_apply)
-    and only the re-oriented files are rewritten there."""
+    and only the re-oriented files are rewritten there.
+    common: every image on one shared box (keeps the moves), else each
+    image flipped / rotated in its own bounding box (moves ignored)."""
+    canvas = common_canvas(items) if common else None
     jobs = []
     for b, its in sorted(item_groups(items, base).items()):
         out = oriented_dir(b)
         for it in its:
-            ident = is_identity(it.tags)
+            ident = canvas is None and not turns(it.tags)
             if ident and not new_folder:
                 continue
             for f in it.files:
@@ -526,7 +585,7 @@ def plan_apply(items, base, new_folder):
                              'tags': tag_text(it.tags) or "-",
                              'status': ("in place" if not new_folder else
                                         "exists (overwrite)" if os.path.exists(dst) else "ok"),
-                             '_tags': dict(it.tags)})
+                             '_tags': dict(it.tags), '_canvas': canvas})
     # in place, a JPG is re-oriented from its TIF before that TIF is rewritten
     jobs.sort(key=lambda j: 0 if j['read'] != j['dst'] else 1)
     return jobs
@@ -565,7 +624,7 @@ def run_apply(jobs, fill_raw, prog):
                     os.makedirs(d)
                 shutil.copy2(j['read'], j['dst'])
             else:
-                apply_file(j['read'], j['dst'], j['_tags'], fill_raw)
+                apply_file(j['read'], j['dst'], j['_tags'], fill_raw, j.get('_canvas'))
             j['done'] = True
             done += 1
         except Exception as e:
@@ -579,11 +638,11 @@ def write_apply_records(out_dir, items, jobs, done, errors, stamp, source, cance
     f = open(os.path.join(out_dir, "orientation.csv"), 'wb')
     try:
         w = csv.writer(f)
-        w.writerow(['key', 'label', 'sample', 'validated', 'flip_h', 'rot', 'files'])
+        w.writerow(['key', 'label', 'sample', 'validated', 'flip_h', 'rot', 'dx', 'dy', 'files'])
         for it in items:
             w.writerow([unicode(v).encode("utf-8") for v in (
                 it.key, it.label, it.sample, it.validated,
-                it.tags.get("flip_h"), it.tags.get("rot"),
+                it.tags.get("flip_h"), it.tags.get("rot"), it.tags.get("dx", 0), it.tags.get("dy", 0),
                 ";".join(os.path.basename(x) for x in it.files))])
     finally:
         f.close()

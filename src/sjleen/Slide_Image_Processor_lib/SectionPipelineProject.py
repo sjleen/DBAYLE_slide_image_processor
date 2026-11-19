@@ -41,7 +41,7 @@ from loci.formats   import FormatTools
 
 
 SCHEMA          = "section_pipeline/1"
-VERSION         = "1.0.3"                  # Slide Image Processor release
+VERSION         = "1.0.4"                  # Slide Image Processor release
 PROJECT_DIR     = ".section_pipeline"
 PROJECT_FILE    = "project.json"
 HISTORY_DIR     = "history"
@@ -223,11 +223,56 @@ def _fill_defaults(proj, root):
     st = proj.setdefault('settings', {})
     for k, v in DEFAULT_SETTINGS.items():
         st.setdefault(k, v)
+    # a section with no area (e.g. a draw ended by a double-click on the 2nd
+    # point) breaks padding / crops each time the project opens: drop it
+    for sid in [k for k, s in proj['sections'].items() if not polygon_ok(s.get('polygon'))]:
+        del proj['sections'][sid]
+        proj['orientation'].pop(sid, None)
     if 'next_section_id' not in proj:
         ids = [int(s[4:]) for s in proj['sections'] if s.startswith('sec_')
                and s[4:].isdigit()]
         proj['next_section_id'] = (max(ids) + 1) if ids else 1
     proj['root'] = os.path.abspath(root)
+
+
+def polygon_ok(pts):
+    """At least 3 distinct points enclosing an area of >= 1 px."""
+    if not pts or len(set((round(p[0], 1), round(p[1], 1)) for p in pts)) < 3:
+        return False
+    n = len(pts)
+    a = sum(pts[i][0] * pts[(i + 1) % n][1] - pts[(i + 1) % n][0] * pts[i][1] for i in range(n))
+    return abs(a) / 2.0 >= 1.0
+
+
+STAGE2_SETTINGS = ('detect', 'padding_frac', 'padding_mode', 'padding_overlap',
+                   'fill_value', 'filename_template', 'pixel_size_um')
+
+
+def reset_stage(proj, stage):
+    """Clear the work of step `stage` (1-3) and of every later step, in
+    place. Exported files on disk are not touched; the previous project
+    stays in history (save_project snapshots it)."""
+    if stage <= 1:
+        # exposure, rotation, image list; slides come back when step 1 opens
+        nid = proj.get('next_section_id', 1)      # ids are never reused
+        fresh = new_project(proj['root'])
+        proj.clear()
+        proj.update(fresh)
+        proj['next_section_id'] = nid
+        return
+    if stage <= 2:
+        proj['sections'] = {}
+        proj['exports'] = []
+        for k, sid in enumerate(sorted(proj['slides'])):
+            s = proj['slides'][sid]
+            s.update({'order': k, 'sample': "", 'excluded': False, 'reviewed': False})
+            s.pop('roi_orient', None)
+        for k in STAGE2_SETTINGS:
+            if k in DEFAULT_SETTINGS:
+                proj['settings'][k] = copy.deepcopy(DEFAULT_SETTINGS[k])
+            else:
+                proj['settings'].pop(k, None)
+    proj['orientation'] = {}
 
 
 def _now():

@@ -15,7 +15,8 @@
 # Default keys (editable with "Keys...", stored in Fiji prefs):
 #   Left / Right = previous / next image, Up = toggle validated,
 #   Down = flip left-right, R / Shift+R = rotate 90 CW / CCW,
-#   Ctrl+Z = undo, Ctrl+S = save
+#   Q / E = rotate 1 degree CCW / CW, W A S D = move up / left / down /
+#   right by 0.2% of the image size (with Shift 1%), Ctrl+Z = undo, Ctrl+S = save
 # Click a cell = go there, Shift+click = select a range (actions then
 # apply to the whole range).
 # ============================================================
@@ -23,12 +24,12 @@
 import os, math, time, threading, traceback
 from jarray import zeros
 
-from java.awt       import (BorderLayout, FlowLayout, GridLayout, Dimension,
+from java.awt       import (Cursor, BorderLayout, FlowLayout, GridLayout, Dimension,
                             Color, Font, BasicStroke, RenderingHints,
                             AlphaComposite, Insets)
 from java.awt.event import (ActionListener, MouseAdapter, WindowAdapter,
-                            KeyEvent, KeyAdapter, ComponentAdapter)
-from java.awt.geom  import AffineTransform
+                            KeyEvent, KeyAdapter, ComponentAdapter, InputEvent)
+from java.awt.geom  import AffineTransform, Rectangle2D, Line2D
 from java.awt.image import BufferedImage, LookupOp, ByteLookupTable
 from java.lang      import Runnable, Runtime, System
 from javax.swing.event import ChangeListener
@@ -66,12 +67,22 @@ ACTIONS = [  # id, label, default key
     ('flip',     "Flip left-right",    "DOWN"),
     ('rot_cw',   "Rotate 90 CW",       "R"),
     ('rot_ccw',  "Rotate 90 CCW",      "shift R"),
-    ('ang_ccw',  "Rotate 1 degree CCW", "A"),
-    ('ang_cw',   "Rotate 1 degree CW",  "S"),
+    ('ang_ccw',  "Rotate 1 degree CCW", "Q"),
+    ('ang_cw',   "Rotate 1 degree CW",  "E"),
+    ('mv_up',    "Move up (Shift: x5)",    "W"),
+    ('mv_left',  "Move left (Shift: x5)",  "A"),
+    ('mv_down',  "Move down (Shift: x5)",  "S"),
+    ('mv_right', "Move right (Shift: x5)", "D"),
     ('undo',     "Undo",               "ctrl Z"),
     ('save',     "Save",               "ctrl S"),
 ]
 PREF = "section_orienter.key."
+OLD_DEFAULTS = {'ang_ccw': "A", 'ang_cw': "S"}   # older defaults, now the move keys
+MOVES = {'mv_up': (0, -1), 'mv_left': (-1, 0), 'mv_down': (0, 1), 'mv_right': (1, 0)}
+C_GRID = Color(85, 85, 85)
+C_AXIS = Color(0, 190, 255)
+GRID_PX = 40       # grid spacing on screen
+PREF_GUIDE = "section_orienter.guide_px"  # horizontal line, image px below the frame top
 
 
 def parse_ks(s):
@@ -247,11 +258,13 @@ class Strip(JPanel):
 # image of the sample fits the view), each image top-center aligned
 # ==============================================================
 
-def draw_top_center(g2, bi, tags, s, view_w, top, alpha=1.0):
+def draw_top_center(g2, bi, tags, s, view_w, top, alpha=1.0, ox=0.0, oy=0.0):
+    """ox / oy: the dx / dy shift in screen px (from the frame center)."""
     iw, ih = bi.getWidth(), bi.getHeight()
     rw, rh = oc.oriented_size(iw, ih, tags)
+    g2 = g2.create()
     at = AffineTransform()
-    at.translate(view_w / 2.0, top + rh * s / 2.0)
+    at.translate(view_w / 2.0 + ox, top + rh * s / 2.0 + oy)
     at.rotate(math.radians(oc.norm_rot(tags.get('rot', 0))))
     at.scale(-s if tags.get('flip_h') else s, s)
     at.translate(-iw / 2.0, -ih / 2.0)
@@ -262,6 +275,7 @@ def draw_top_center(g2, bi, tags, s, view_w, top, alpha=1.0):
         g2.setComposite(old)
     else:
         g2.drawImage(bi, at, None)
+    g2.dispose()
 
 
 class ImageView(JPanel):
@@ -304,7 +318,8 @@ class ImageView(JPanel):
                                         RenderingHints.VALUE_INTERPOLATION_BILINEAR)
             else:
                 target = g2
-            draw_top_center(target, bi, it.tags, win.bi_scale(it, bi, s), w, m)
+            draw_top_center(target, bi, it.tags, win.bi_scale(it, bi, s), w, m,
+                            ox=it.tags.get('dx', 0) * s, oy=it.tags.get('dy', 0) * s)
             if win.ghost.isSelected():
                 idx = win.sample_idx()
                 k = idx.index(win.cur)
@@ -312,10 +327,16 @@ class ImageView(JPanel):
                     p = win.items[idx[k - 1]]
                     pb = win.cache_get(p.key)
                     if pb:
-                        draw_top_center(target, pb, p.tags, win.bi_scale(p, pb, s), w, m, 0.35)
+                        draw_top_center(target, pb, p.tags, win.bi_scale(p, pb, s), w, m, 0.35,
+                                        p.tags.get('dx', 0) * s, p.tags.get('dy', 0) * s)
             if lut is not None:
                 target.dispose()
                 g2.drawImage(LookupOp(lut, None).filter(off, None), 0, 0, None)
+            fw, fh = oc.oriented_size(bi.getWidth(), bi.getHeight(), it.tags)
+            cy = m + win.guide_y * s if win.guide_y is not None else \
+                m + fh * win.bi_scale(it, bi, s) / 2.0
+            self.guide_cy, self.guide_s = cy, s
+            self._guides(g2, w, h, cy)
         g2.setFont(Font("SansSerif", Font.BOLD, 15))
         x = 14
         if it.tags.get('flip_h'):
@@ -323,8 +344,33 @@ class ImageView(JPanel):
         r = oc.norm_rot(it.tags.get('rot', 0))
         if r:
             x = self._badge(g2, "R%g" % r, C_MOD, x)
+        if it.tags.get('dx') or it.tags.get('dy'):
+            x = self._badge(g2, "X%+d Y%+d" % (it.tags.get('dx', 0), it.tags.get('dy', 0)), C_MOD, x)
         if it.validated:
             self._badge(g2, "VALIDATED", C_VALID, x)
+        g2.dispose()
+
+    def _guides(self, g2, w, h, cy):
+        """Grid and center lines through (view center, cy). cy = the
+        dragged horizontal line, or the center of the current image."""
+        win = self.win
+        cx = w / 2.0
+        g2 = g2.create()
+        g2.setStroke(BasicStroke(1.0))
+        if win.grid_cb.isSelected():
+            g2.setColor(C_GRID)
+            k = -int(cx // GRID_PX)
+            while cx + k * GRID_PX <= w:
+                x = cx + k * GRID_PX
+                g2.draw(Line2D.Double(x, 0, x, h)); k += 1
+            k = -int(cy // GRID_PX)
+            while cy + k * GRID_PX <= h:
+                y = cy + k * GRID_PX
+                g2.draw(Line2D.Double(0, y, w, y)); k += 1
+        if win.axis_cb.isSelected():
+            g2.setColor(C_AXIS)
+            g2.draw(Line2D.Double(cx, 0, cx, h))
+            g2.draw(Line2D.Double(0, cy, w, cy))
         g2.dispose()
 
     def _badge(self, g2, text, col, x):
@@ -358,7 +404,7 @@ class OrienterWindow(JFrame):
         self.anchor = None
         self.sel = None              # (a, b) global index range or None
         self.history = []
-        self._angle_run = False    # consecutive 1-degree steps share one undo
+        self._run = None           # 'angle' / 'move': a run of steps shares one undo
         self.dirty = False
         self.kinds = oc.preview_kinds(items, base)
         self.samples = oc.samples_in_order(items)
@@ -371,6 +417,9 @@ class OrienterWindow(JFrame):
         self._gen = 0
         self._alive = True
         self.keys = dict((a, Prefs.get(PREF + a, d)) for a, _l, d in ACTIONS)
+        for a, old in OLD_DEFAULTS.items():
+            if self.keys[a] == old:
+                self.keys[a] = [d for b, _l, d in ACTIONS if b == a][0]
         self._build()
         self._bind_keys()
         self.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE)
@@ -392,6 +441,9 @@ class OrienterWindow(JFrame):
 
     # ---------------------------------------------------------- layout
     def _build(self):
+        win = self
+        gy = Prefs.get(PREF_GUIDE, -1.0)
+        self.guide_y = gy if gy >= 0.0 else None
         c = self.getContentPane()
         c.setLayout(BorderLayout())
         top = JPanel(BorderLayout())
@@ -423,6 +475,33 @@ class OrienterWindow(JFrame):
             def mousePressed(_s, e):
                 view.requestFocusInWindow()   # leave the angle field
         self.view.addMouseListener(_TakeFocus())
+        class _Guide(MouseAdapter):
+            def _near(_s, e):
+                cy = getattr(view, 'guide_cy', None)
+                return (cy is not None and abs(e.getY() - cy) <= 5 and
+                        (win.grid_cb.isSelected() or win.axis_cb.isSelected()))
+            def mousePressed(_s, e):
+                _s.drag = _s._near(e)
+            def mouseDragged(_s, e):
+                sc = getattr(view, 'guide_s', None)
+                if getattr(_s, 'drag', False) and sc:
+                    win.guide_y = max(0.0, float(e.getY() - ImageView.M) / sc)
+                    view.repaint()
+            def mouseReleased(_s, e):
+                if getattr(_s, 'drag', False):
+                    _s.drag = False
+                    Prefs.set(PREF_GUIDE, win.guide_y)
+            def mouseMoved(_s, e):
+                view.setCursor(Cursor.getPredefinedCursor(
+                    Cursor.N_RESIZE_CURSOR if _s._near(e) else Cursor.DEFAULT_CURSOR))
+            def mouseClicked(_s, e):
+                if e.getClickCount() == 2 and _s._near(e):   # back to the image center
+                    win.guide_y = None
+                    Prefs.set(PREF_GUIDE, -1)
+                    view.repaint()
+        g = _Guide()
+        self.view.addMouseListener(g)
+        self.view.addMouseMotionListener(g)
         self.strip.addMouseListener(_TakeFocus())
         c.add(self.view, BorderLayout.CENTER)
         c.add(tools, BorderLayout.SOUTH)
@@ -490,10 +569,17 @@ class OrienterWindow(JFrame):
         self.ghost = JCheckBox("Ghost previous", False)
         self.ghost.setFocusable(False)
         self.ghost.addActionListener(_Act(self.view.repaint))
+        self.grid_cb = JCheckBox("Grid", False)
+        self.axis_cb = JCheckBox("Center lines", False)
+        self.axis_cb.setToolTipText("Drag the horizontal line to move it; double-click it to "
+                                    "put it back at the image center")
+        for cb in (self.grid_cb, self.axis_cb):
+            cb.setFocusable(False)
+            cb.addActionListener(_Act(self.view.repaint))
         row1.add(_group("Check", [
             _btn("Validate sample", self.validate_sample,
                  "Mark every section of this sample validated"),
-            self.ghost]))
+            self.ghost, self.grid_cb, self.axis_cb]))
         p.add(row1, BorderLayout.CENTER)
 
 
@@ -546,11 +632,54 @@ class OrienterWindow(JFrame):
         """+/- 1 degree on every target; one undo step per run of clicks."""
         if not self.items:
             return
-        if not self._angle_run:
+        if self._run != 'angle':
             self._push()
-            self._angle_run = True
+            self._run = 'angle'
+        self._rotate(dict((id(t), d) for t in self.targets()))
+        self._changed()
+
+    def _rotate(self, deltas):
+        """Turn each target (deltas: {id(item): degrees CW}) about the 0
+        point on screen (vertical center line x dragged / image-center
+        horizontal line): its move (dx, dy) turns with it."""
+        meta = self._meta.get(self.items[self.cur].sample)
+        g = self.guide_y                                    # orig px below the frame top
         for t in self.targets():
-            t.tags['rot'] = oc.norm_rot(t.tags.get('rot', 0) + d)
+            d = deltas.get(id(t), 0)
+            if not d:
+                continue
+            new = oc.norm_rot(t.tags.get('rot', 0) + d)
+            if meta is not None and t.key in meta['dims']:
+                w, h = meta['dims'][t.key]
+                fh = oc.oriented_size(w, h, t.tags)[1]
+                fh2 = oc.oriented_size(w, h, {'rot': new})[1]
+                gy = g if g is not None else fh / 2.0
+                ox, oy = t.tags.get('dx', 0), fh / 2.0 + t.tags.get('dy', 0) - gy
+                a = math.radians(d)
+                nx = ox * math.cos(a) - oy * math.sin(a)
+                ny = ox * math.sin(a) + oy * math.cos(a)
+                t.tags['dx'] = round(nx, 2)
+                t.tags['dy'] = round(gy + ny - fh2 / 2.0, 2)
+            t.tags['rot'] = new
+
+    def move_step(self, a, big):
+        """Shift every target by 0.2% (big: 1%) of its oriented size,
+        rounded down to whole pixels (at least 1)."""
+        if not self.items:
+            return
+        meta = self._meta.get(self.items[self.cur].sample)
+        if meta is None:
+            return
+        ux, uy = MOVES[a]
+        f = 0.01 if big else 0.002
+        if self._run != 'move':
+            self._push()
+            self._run = 'move'
+        for t in self.targets():
+            w, h = meta['dims'].get(t.key, (1, 1))
+            ow, oh = oc.oriented_size(w, h, t.tags)
+            t.tags['dx'] = t.tags.get('dx', 0) + ux * max(1, int(ow * f))
+            t.tags['dy'] = t.tags.get('dy', 0) + uy * max(1, int(oh * f))
         self._changed()
 
     def angle_typed(self):
@@ -560,8 +689,7 @@ class OrienterWindow(JFrame):
             self._sync_angle()
             return
         self._push()
-        for t in self.targets():
-            t.tags['rot'] = oc.norm_rot(a)
+        self._rotate(dict((id(t), oc.norm_rot(a - t.tags.get('rot', 0))) for t in self.targets()))
         self._changed()
         self.view.requestFocusInWindow()   # arrow keys back to navigation
 
@@ -576,9 +704,16 @@ class OrienterWindow(JFrame):
             if ks is not None:
                 im.put(ks, a)
                 am.put(a, _KeyAct(lambda a=a: self.do(a)))
+                if a in MOVES:
+                    big = KeyStroke.getKeyStroke(ks.getKeyCode(),
+                                                 ks.getModifiers() | InputEvent.SHIFT_DOWN_MASK)
+                    im.put(big, a + "_big")
+                    am.put(a + "_big", _KeyAct(lambda a=a: self.move_step(a, True)))
         shown = ('prev', 'next', 'validate', 'flip', 'ang_ccw', 'ang_cw', 'prev_sample', 'next_sample')
-        self.hint.setText("   ".join("%s: %s" % (key_text(self.keys.get(a)), l)
-                                     for a, l, _d in ACTIONS if a in shown))
+        mv = "".join(key_text(self.keys.get(a)) for a in ('mv_up', 'mv_left', 'mv_down', 'mv_right'))
+        self.hint.setText("   ".join(["%s: %s" % (key_text(self.keys.get(a)), l)
+                                      for a, l, _d in ACTIONS if a in shown] +
+                                     ["%s: move (Shift x5)" % mv]))
 
     def edit_keys(self):
         dlg = JDialog(self, "Key bindings", True)
@@ -699,7 +834,8 @@ class OrienterWindow(JFrame):
         for i in self._by_sample[it.sample]:
             x = self.items[i]
             w, h = meta['dims'].get(x.key, (1, 1))
-            ow, oh = oc.oriented_size(w, h, x.tags)
+            q = round(x.tags.get('rot', 0) / 90.0) * 90.0   # 1-degree turns keep the zoom
+            ow, oh = oc.oriented_size(w, h, {'rot': q})
             ew, eh = max(ew, ow), max(eh, oh)
         return min(bw / ew, bh / eh)
 
@@ -897,7 +1033,7 @@ class OrienterWindow(JFrame):
             return
         old_sample = self.items[self.cur].sample if self.items else None
         self.cur = i
-        self._angle_run = False
+        self._run = None
         if not keep_sel:
             self.sel, self.anchor = None, None
         s = self.items[i].sample
@@ -949,6 +1085,8 @@ class OrienterWindow(JFrame):
         r0 = oc.norm_rot(it.tags.get('rot', 0))
         if r0:
             parts.append("rotated %g&deg;" % r0)
+        if it.tags.get('dx') or it.tags.get('dy'):
+            parts.append("moved x %+d, y %+d px" % (it.tags.get('dx', 0), it.tags.get('dy', 0)))
         tags = ", ".join(parts) or "no change"
         r = self.selection_range()
         selt = ("   |   %d selected" % len(r)) if r and len(r) > 1 else ""
@@ -1003,16 +1141,22 @@ class OrienterWindow(JFrame):
             self._changed()
         elif a == 'flip':
             self._push()
+            # mirror the image as shown (after its rotation, about the vertical
+            # center line): flip-then-rotate storage needs the angle and the
+            # left-right move negated, so an aligned midline stays aligned
             for t in self.targets():
                 t.tags['flip_h'] = not t.tags.get('flip_h')
+                t.tags['rot'] = oc.norm_rot(-t.tags.get('rot', 0))
+                t.tags['dx'] = -t.tags.get('dx', 0)
             self._changed()
+        elif a in MOVES:
+            self.move_step(a, False)
         elif a in ('ang_cw', 'ang_ccw'):            # same as the 1-degree arrow buttons
             self.angle_step(1 if a == 'ang_cw' else -1)
         elif a in ('rot_cw', 'rot_ccw'):
             d = 90 if a == 'rot_cw' else -90
             self._push()
-            for t in self.targets():
-                t.tags['rot'] = oc.norm_rot(t.tags.get('rot', 0) + d)
+            self._rotate(dict((id(t), d) for t in self.targets()))
             self._changed()
         elif a == 'undo':
             self.undo()
@@ -1032,14 +1176,14 @@ class OrienterWindow(JFrame):
         self._changed()
 
     def _push(self):
-        self._angle_run = False
+        self._run = None
         self.history.append([(dict(it.tags), it.validated) for it in self.items])
         del self.history[:-200]
 
     def undo(self):
         if not self.history:
             return
-        self._angle_run = False
+        self._run = None
         snap = self.history.pop()
         for it, (t, v) in zip(self.items, snap):
             it.tags, it.validated = dict(t), v
@@ -1087,6 +1231,7 @@ class OrienterWindow(JFrame):
         c.setLayout(BorderLayout())
         new_cb = JCheckBox("Write all files to a new folder (section files kept)", True)
         new_cb.setEnabled(can_inplace)
+        same_cb = JCheckBox("Same size for all images (one box around every image, keeps the moves)", False)
         dest = JLabel(" ")
         info = JLabel(" ")
         info.setForeground(Color(200, 60, 60))
@@ -1108,6 +1253,10 @@ class OrienterWindow(JFrame):
         r2 = JPanel(FlowLayout(FlowLayout.LEFT)); r2.add(new_cb)
         r2d = JPanel(FlowLayout(FlowLayout.LEFT)); r2d.add(dest)
         body.add(cex._tgroup("Destination", r2, r2d))
+        r1 = JPanel(FlowLayout(FlowLayout.LEFT)); r1.add(same_cb)
+        r1d = JPanel(FlowLayout(FlowLayout.LEFT))
+        r1d.add(JLabel("Off: each image flipped / rotated in its own bounding box (moves not used)"))
+        body.add(cex._tgroup("Size", r1, r1d))
         c.add(body, BorderLayout.CENTER)
         def plan():
             new = new_cb.isSelected()
@@ -1117,7 +1266,7 @@ class OrienterWindow(JFrame):
                     info.setText(u"%s already exists: rename or delete it first"
                                  % os.path.basename(taken[0]))
                     return None, None
-            return new, oc.plan_apply(self.items, self.base, new)
+            return new, oc.plan_apply(self.items, self.base, new, same_cb.isSelected())
         def preview():
             new, jobs = plan()
             if jobs is not None:

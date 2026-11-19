@@ -1,5 +1,5 @@
 # ============================================================
-# Slide_Image_Processor_v1.0.3.py  -  launcher for the section pipeline (file name carries the version)
+# Slide_Image_Processor_v1.0.4.py  -  launcher for the section pipeline (file name carries the version)
 #
 # Pick one folder, then open any stage with it:
 #   1. Multichannel Image Set Previewer (exposure, slide rotation)
@@ -24,7 +24,7 @@ from java.awt import BorderLayout, GridLayout, Dimension, Color, Font
 from java.awt.event import WindowAdapter
 from javax.swing import (JFrame, JPanel, JButton, JComboBox, JLabel,
                          JFileChooser, SwingUtilities, BorderFactory, BoxLayout,
-                         JScrollPane, JCheckBox)
+                         JScrollPane, JCheckBox, JOptionPane)
 
 PREF_RECENT = "sjleen.slide_image_processor.recent"
 PREF_OLD    = "sjleen.section_pipeline.recent"
@@ -34,6 +34,11 @@ N_RECENT = 10
 TOOLS = [("Exposure & rotation", "MultichannelImageSetPreviewer.py"),
          ("Section Cropper", "SectionCropper.py"),
          ("Section Orienter", "SectionOrienter.py")]
+
+# what Reset clears, per step (a reset also clears every later step)
+RESET_WHAT = ["exposure, rotation and image list (step 1)",
+              "sections, sample names and detection settings (step 2)",
+              "flip / rotation tags (step 3)"]
 
 GREEN = Color(30, 130, 60)
 RED   = Color(200, 40, 40)
@@ -362,7 +367,7 @@ def stage3_status(folder, proj):
         n_sec = len([s for s in proj.get('sections', {}).values() if not s.get('excluded')])
         o = proj.get('orientation', {})
         n_val = len([v for v in o.values() if v.get('validated')])
-        n_mod = len([v for v in o.values() if v.get('rot') or v.get('flip_h')])
+        n_mod = len([v for v in o.values() if v.get('rot') or v.get('flip_h') or v.get('dx') or v.get('dy')])
         if n_sec:
             out.append(("Validated %d / %d sections, %d re-oriented" % (n_val, n_sec, n_mod),
                         GREEN if n_val >= n_sec else GRAY))
@@ -503,7 +508,13 @@ class Launcher(object):
             col.setBorder(_titled("Step %d" % (k + 1)))
             b = JButton(label)
             b.addActionListener(lambda e, fn=fname: self.open_tool(fn))
-            col.add(b, BorderLayout.NORTH)
+            rb = JButton("Reset...")
+            rb.setToolTipText("Clear the saved work of this step and of the later steps")
+            rb.addActionListener(lambda e, n=k + 1: self.reset_step(n))
+            brow = JPanel(BorderLayout(6, 0))
+            brow.add(b, BorderLayout.CENTER)
+            brow.add(rb, BorderLayout.EAST)
+            col.add(brow, BorderLayout.NORTH)
             box = JPanel()
             box.setLayout(BoxLayout(box, BoxLayout.Y_AXIS))
             sp = JScrollPane(box)
@@ -567,6 +578,29 @@ class Launcher(object):
                 l.setToolTipText(text)
                 box.add(l)
             box.revalidate(); box.repaint()
+
+    def reset_step(self, n):
+        folder = self.folder()
+        workspace_module()
+        import SectionPipelineProject as spp
+        if not folder or not os.path.isfile(spp.project_path(folder)):
+            IJ.error("Slide Image Processor", "This folder has no project yet.")
+            return
+        msg = ("Reset step %d%s?\n\nClears:\n%s\n\n"
+               "Close the step windows first. Exported image files are kept.\n"
+               "The project before the reset is kept in .section_pipeline/history."
+               % (n, " and the later steps" if n < 3 else "",
+                  "\n".join("  - " + t for t in RESET_WHAT[n - 1:])))
+        if JOptionPane.showConfirmDialog(self.frame, msg, "Reset step %d" % n,
+                                         JOptionPane.OK_CANCEL_OPTION,
+                                         JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION:
+            return
+        try:
+            spp.update_project(folder, lambda p: spp.reset_stage(p, n))
+        except Exception as e:
+            IJ.log(traceback.format_exc())
+            IJ.error("Slide Image Processor", "Reset failed: %s" % e)
+        self.refresh()
 
     def open_tool(self, fname):
         folder = self.folder()

@@ -668,8 +668,12 @@ class SlideCanvas(JPanel):
 
     def _double(self, e):
         if self.mode == 'draw':
-            if self._temp and len(self._temp) > 3:
-                self._temp.pop()          # the 2nd click of the double
+            # both clicks of the double added a point at (nearly) the same place
+            if len(self._temp) >= 2:
+                ax, ay = self.to_screen(*self._temp[-1])
+                bx, by = self.to_screen(*self._temp[-2])
+                if abs(ax - bx) <= HANDLE and abs(ay - by) <= HANDLE:
+                    self._temp.pop()
             self._finish_draw()
             return
         if self.mode == 'split':
@@ -685,8 +689,10 @@ class SlideCanvas(JPanel):
 
     def _finish_draw(self):
         pts, self._temp = self._temp, []
-        if len(pts) >= 3:
+        if spp.polygon_ok(pts):
             self.win.add_drawn(pts)
+        elif pts:
+            self.win.set_status("Draw: a section needs at least 3 separate points")
         self.repaint()
 
     def _finish_split(self):
