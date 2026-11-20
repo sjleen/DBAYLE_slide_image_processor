@@ -16,7 +16,7 @@
 #   Left / Right = previous / next image, Up = toggle validated,
 #   Down = flip left-right, R / Shift+R = rotate 90 CW / CCW,
 #   Q / E = rotate 1 degree CCW / CW, W A S D = move up / left / down /
-#   right by 0.2% of the image size (with Shift 1%), Ctrl+Z = undo, Ctrl+S = save
+#   right by 0.2% of the image size (with Shift 1%), Ctrl+Z = undo, Ctrl+S = save (Cmd on a Mac)
 # Click a cell = go there, Shift+click = select a range (actions then
 # apply to the whole range).
 # ============================================================
@@ -73,8 +73,8 @@ ACTIONS = [  # id, label, default key
     ('mv_left',  "Move left (Shift: x5)",  "A"),
     ('mv_down',  "Move down (Shift: x5)",  "S"),
     ('mv_right', "Move right (Shift: x5)", "D"),
-    ('undo',     "Undo",               "ctrl Z"),
-    ('save',     "Save",               "ctrl S"),
+    ('undo',     "Undo",               spp.MENU + " Z"),
+    ('save',     "Save",               spp.MENU + " S"),
 ]
 PREF = "section_orienter.key."
 OLD_DEFAULTS = {'ang_ccw': "A", 'ang_cw': "S"}   # older defaults, now the move keys
@@ -523,7 +523,7 @@ class OrienterWindow(JFrame):
         right.add(_group("Project" if proj else "Tags (no project)", [
             self.save_lbl,
             _btn("Save to project" if proj else "Save tags", lambda: self.do("save"),
-                 "Ctrl+S")]))
+                 spp.MENU_TXT + "+S")]))
         right.add(_group("Files", [_btn("Export files...", self.open_apply,
                                         "Write the re-oriented section files")]))
         bar.add(right, BorderLayout.EAST)

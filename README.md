@@ -47,6 +47,8 @@ Other files you keep in `plugins/sjleen/` are not touched. Projects and their py
 3. **Step 2:** **Detect selected slides**, fix the sections, set sample names, **Save to project**, then **Files > Export files...**.
 4. **Step 3:** go through the samples, flip / rotate where needed, **Validate sample**, then **Files > Export files...**.
 
+**Open** (right of **Browse...**) opens the chosen folder in Explorer / Finder. The folder field undoes with Ctrl+Z (redo Ctrl+Y or Ctrl+Shift+Z).
+
 Under each launcher button, a status list shows what that step has produced: green = done, red = needed for the next step, gray = optional or not done yet.
 
 **Reset...** next to each launcher button clears that step's work and that of every later step (step 1: exposure, rotation and image list; step 2: sections, sample names and detection settings; step 3: flip / rotation / move tags). Close the step windows first. Exported image files and the pyramid are kept, and the project before the reset is kept in `.section_pipeline/history`.
@@ -86,12 +88,15 @@ All results stay inside the project folder.
 - **Sample names changed after an export?** Use step 2 **Files > Update names...**. It renames the exported files (step 2 and step 3) without cropping again. The launcher warns when names are out of date.
 - **Touching sections.** Step 2 cuts sections that touch at a narrow neck (Touching > depth) and splits blobs much larger than a typical section (Touching > size x). Anything still merged can be split with the **Split** tool.
 - **Step 3 keys.** Default shortcuts include Q / E (rotate 1 degree counter-clockwise / clockwise) and W / A / S / D (move up / left / down / right by 0.2% of the image size, with Shift 1%); change any of them with **Keys...**.
+- **Mac.** Shortcuts written with Ctrl here use Cmd on a Mac (Cmd+Z, Cmd+S, Cmd+A, Cmd+click ...).
 - **Step 3 guides.** **Grid** and **Center lines** show a grid and a cross whose center is the 0 point. Drag the horizontal line to set its height (double-click it to put it back at the image center). Rotation turns the image about the 0 point; **Flip** mirrors the image as shown about the vertical line, so a midline aligned by rotation stays aligned.
 
 ## Version
 
 - **1.0.4** (2026-11-19)
   - Launcher: **Reset...** button per step; resetting a step also resets the later steps.
+  - Launcher: **Open** button for the chosen folder; undo / redo in the folder field.
+  - Mac: shortcuts use Cmd instead of Ctrl in every tool.
   - Step 2: a polygon finished with a double-click no longer keeps a duplicate point; sections without area are refused, and dropped when a project is opened (such a section made step 2 fail on every start).
   - Step 3: 1-degree rotation moved to Q / E; W / A / S / D move the image (Shift: larger steps).
   - Step 3: **Grid** and **Center lines**, with a draggable horizontal line; rotation turns about the 0 point; **Flip** mirrors the image as shown; fine rotation no longer changes the zoom.

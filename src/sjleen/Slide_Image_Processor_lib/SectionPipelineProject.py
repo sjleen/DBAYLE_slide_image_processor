@@ -38,6 +38,17 @@ from ij.plugin      import RoiEnlarger
 from ij.process     import ByteProcessor, ShortProcessor, FloatProcessor
 
 from loci.formats   import FormatTools
+from java.lang      import System
+
+# shortcut modifier: Cmd on a Mac, Ctrl elsewhere
+MAC = System.getProperty("os.name", "").lower().startswith("mac")
+MENU = "meta" if MAC else "ctrl"          # KeyStroke text
+MENU_TXT = "Cmd" if MAC else "Ctrl"       # shown in tooltips
+
+
+def menu_down(e):
+    """Shortcut modifier held (Cmd on a Mac, Ctrl elsewhere)."""
+    return e.isMetaDown() if MAC else e.isControlDown()
 
 
 SCHEMA          = "section_pipeline/1"

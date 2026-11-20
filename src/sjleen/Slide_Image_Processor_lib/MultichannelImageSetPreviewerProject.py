@@ -565,7 +565,7 @@ def _pj_after_ui(self):
     # Ctrl+S = Save to project (as in the other tools)
     rp = self.getRootPane()
     rp.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(
-        KeyStroke.getKeyStroke("ctrl S"), "save_project")
+        KeyStroke.getKeyStroke(spp.MENU + " S"), "save_project")
     class _Save(AbstractAction):
         def actionPerformed(_s, e):
             win._save_project()
@@ -724,7 +724,7 @@ def _pj_build_project_bar(self):
     right = [dark_group("Project", [
         self.project_status,
         dark_button("Save to project", lambda: win._save_project(),
-                    "Write exposure + slide orientation to .section_pipeline/project.json (Ctrl+S)")]),
+                    "Write exposure + slide orientation to .section_pipeline/project.json (" + spp.MENU_TXT + "+S)")]),
              dark_group("Files (optional)", [
         dark_button("Export files...", lambda: win._open_export(),
                     "Optional: write single-channel / merged image files")])]

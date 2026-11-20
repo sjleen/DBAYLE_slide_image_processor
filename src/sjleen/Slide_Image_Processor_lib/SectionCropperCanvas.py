@@ -582,7 +582,7 @@ class SlideCanvas(JPanel):
             return
         # edit: only sections drawn by hand can be dragged / reshaped;
         # detected ones are select-only
-        multi = e.isShiftDown() or e.isControlDown()
+        multi = e.isShiftDown() or spp.menu_down(e)
         if len(self.selected) == 1 and not multi and self._drawn(self.selected[0]):
             vi = self._hit_vertex(self.selected[0], px, py)
             if vi is not None:
@@ -707,7 +707,7 @@ class SlideCanvas(JPanel):
 
     def _key(self, e):
         k = e.getKeyCode()
-        ctrl = e.isControlDown()
+        ctrl = spp.menu_down(e)       # Cmd on a Mac
         if k == KeyEvent.VK_ESCAPE:
             if self.mode == 'order':
                 self.win.order_done()

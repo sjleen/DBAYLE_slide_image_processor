@@ -19,12 +19,14 @@ import os, sys, re, json, traceback, codecs
 import jarray
 
 from ij import IJ, Prefs
-from java.lang import Object, Thread as JThread, Runnable
-from java.awt import BorderLayout, GridLayout, Dimension, Color, Font
+from java.lang import Object, Thread as JThread, Runnable, Throwable, System
+from java.io import File
+from java.awt import BorderLayout, GridLayout, Dimension, Color, Font, Desktop
 from java.awt.event import WindowAdapter
 from javax.swing import (JFrame, JPanel, JButton, JComboBox, JLabel,
                          JFileChooser, SwingUtilities, BorderFactory, BoxLayout,
-                         JScrollPane, JCheckBox, JOptionPane)
+                         JScrollPane, JCheckBox, JOptionPane, KeyStroke, AbstractAction)
+from javax.swing.undo import UndoManager, CannotUndoException
 
 PREF_RECENT = "sjleen.slide_image_processor.recent"
 PREF_OLD    = "sjleen.section_pipeline.recent"
@@ -438,6 +440,13 @@ def _titled(title):
     return BorderFactory.createCompoundBorder(b, BorderFactory.createEmptyBorder(2, 4, 4, 4))
 
 
+class _FnAction(AbstractAction):
+    def __init__(self, fn):
+        AbstractAction.__init__(self); self.fn = fn
+    def actionPerformed(self, e):
+        self.fn()
+
+
 class _Run(Runnable):
     def __init__(self, fn):
         self.fn = fn
@@ -483,7 +492,26 @@ class Launcher(object):
         self.combo.setEditable(True)
         self.combo.addActionListener(lambda e: self.refresh())
         top.add(self.combo, BorderLayout.CENTER)
-        top.add(JButton("Browse...", actionPerformed=lambda e: self.browse()), BorderLayout.EAST)
+        btns = JPanel(GridLayout(1, 2, 6, 0))
+        btns.add(JButton("Browse...", actionPerformed=lambda e: self.browse()))
+        ob = JButton("Open", actionPerformed=lambda e: self.open_folder())
+        ob.setToolTipText("Open this folder in the file explorer")
+        btns.add(ob)
+        top.add(btns, BorderLayout.EAST)
+        # a combo box editor has no undo of its own: Ctrl(Cmd)+Z / Y
+        ed = self.combo.getEditor().getEditorComponent()
+        um = UndoManager()
+        ed.getDocument().addUndoableEditListener(um)
+        def _undo(redo):
+            try:
+                if redo and um.canRedo(): um.redo()
+                elif not redo and um.canUndo(): um.undo()
+            except CannotUndoException:
+                pass
+        mk = "meta" if System.getProperty("os.name", "").lower().startswith("mac") else "ctrl"   # Cmd on a Mac
+        for key, redo in ((mk + " Z", False), (mk + " Y", True), (mk + " shift Z", True)):
+            ed.getInputMap().put(KeyStroke.getKeyStroke(key), key)
+            ed.getActionMap().put(key, _FnAction(lambda r=redo: _undo(r)))
         north = JPanel(BorderLayout(0, 6))
         north.add(top, BorderLayout.NORTH)
         self.skip_cb = JCheckBox("Skip building and using L1  (pyramid build writes ~75% less for TIF "
@@ -540,6 +568,16 @@ class Launcher(object):
     def folder(self):
         v = self.combo.getEditor().getItem()
         return (unicode(v).strip().strip('"') if v is not None else u"")
+
+    def open_folder(self):
+        f = self.folder()
+        if not f or not os.path.isdir(f):
+            IJ.error("Slide Image Processor", "Choose an existing folder first.")
+            return
+        try:
+            Desktop.getDesktop().open(File(f))
+        except (Exception, Throwable) as e:
+            IJ.error("Slide Image Processor", "Could not open the folder: %s" % e)
 
     def browse(self):
         ch = JFileChooser(self.folder() or None)

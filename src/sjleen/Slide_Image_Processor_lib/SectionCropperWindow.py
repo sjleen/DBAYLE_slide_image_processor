@@ -421,8 +421,8 @@ class CropperWindow(JFrame):
         bar.add(_group("Tool", tools + [sep,
                     _btn("Merge", self.merge_selected, "Merge the selected sections into one"),
                     _btn("Delete", self.delete_selected, "Delete the selected sections (Delete key)")]))
-        bar.add(_group("History", [_btn("Undo", self.do_undo, "Ctrl+Z"),
-                                   _btn("Redo", self.do_redo, "Ctrl+Y")]))
+        bar.add(_group("History", [_btn("Undo", self.do_undo, spp.MENU_TXT + "+Z"),
+                                   _btn("Redo", self.do_redo, spp.MENU_TXT + "+Y")]))
         bar.add(_group("Slide", [_btn("<", lambda: self.step_slide(-1), "Previous slide (Page Up)"),
                                  _btn(">", lambda: self.step_slide(1), "Next slide (Page Down)"),
                                  _btn("Fit", lambda: self.canvas.fit(), "Fit to window (F)")]))
@@ -451,7 +451,7 @@ class CropperWindow(JFrame):
         right = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 2))
         right.add(_group("Memory", export_mod.memory_widgets()))
         right.add(_group("Project", [self.save_label,
-                                     _btn("Save to project", self.save, "Ctrl+S")]))
+                                     _btn("Save to project", self.save, spp.MENU_TXT + "+S")]))
         right.add(_group("Files", [_btn("Export files...", self.open_export,
                                         "Write section image files (preview the job list first)"),
                                    _btn("Update names...", self.update_names,
@@ -720,10 +720,10 @@ class CropperWindow(JFrame):
         im = rp.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
         am = rp.getActionMap()
         for name, ks, fn in [
-                ("undo", KeyStroke.getKeyStroke(KeyEvent.VK_Z, InputEvent.CTRL_DOWN_MASK), self.do_undo),
-                ("redo", KeyStroke.getKeyStroke(KeyEvent.VK_Y, InputEvent.CTRL_DOWN_MASK), self.do_redo),
-                ("redo2", KeyStroke.getKeyStroke(KeyEvent.VK_Z, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), self.do_redo),
-                ("save", KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK), self.save),
+                ("undo", KeyStroke.getKeyStroke(spp.MENU + " Z"), self.do_undo),
+                ("redo", KeyStroke.getKeyStroke(spp.MENU + " Y"), self.do_redo),
+                ("redo2", KeyStroke.getKeyStroke(spp.MENU + " shift Z"), self.do_redo),
+                ("save", KeyStroke.getKeyStroke(spp.MENU + " S"), self.save),
                 ("next", KeyStroke.getKeyStroke(KeyEvent.VK_PAGE_DOWN, 0), lambda: self.step_slide(1)),
                 ("prev", KeyStroke.getKeyStroke(KeyEvent.VK_PAGE_UP, 0), lambda: self.step_slide(-1))]:
             im.put(ks, name)
